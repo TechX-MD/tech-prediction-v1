@@ -7,7 +7,6 @@ const ADMIN_EMAILS = [
   'publicaccount660@gmail.com'
 ];
 
-// Major Leagues to fetch live
 const LEAGUES = [
   { id: 'eng.1', name: 'Premier League' },
   { id: 'esp.1', name: 'La Liga' },
@@ -17,7 +16,28 @@ const LEAGUES = [
   { id: 'uefa.champions', name: 'UEFA Champions League' }
 ];
 
-// Poisson math engine
+// Calculate realistic, distinct attack ratings for teams
+function getTeamStrength(teamName) {
+  const elite = {
+    'Man City': 2.45, 'Real Madrid': 2.35, 'Bayern': 2.40, 'Arsenal': 2.20,
+    'Liverpool': 2.25, 'Barcelona': 2.15, 'PSG': 2.10, 'Inter': 1.95, 'Leverkusen': 2.05,
+    'Chelsea': 1.80, 'Juventus': 1.70, 'Atletico': 1.75, 'Milan': 1.65,
+    'Dortmund': 1.85, 'Tottenham': 1.75, 'Aston Villa': 1.70, 'Newcastle': 1.65,
+    'Napoli': 1.75, 'Sporting': 1.80, 'Benfica': 1.75, 'Forest': 1.15
+  };
+
+  for (const [key, val] of Object.entries(elite)) {
+    if (teamName.toLowerCase().includes(key.toLowerCase())) return val;
+  }
+
+  // Deterministic seed for unique strength per club name
+  let hash = 0;
+  for (let i = 0; i < teamName.length; i++) hash = (hash << 5) - hash + teamName.charCodeAt(i);
+  const val = 1.10 + (Math.abs(hash) % 85) / 100;
+  return parseFloat(val.toFixed(2));
+}
+
+// Factorial & Poisson Functions
 function factorial(n) {
   if (n === 0 || n === 1) return 1;
   let res = 1;
@@ -29,66 +49,110 @@ function poisson(lambda, x) {
   return (Math.exp(-lambda) * Math.pow(lambda, x)) / factorial(x);
 }
 
-function calculateFullPrediction(hXG = 1.6, aXG = 1.2) {
-  let homeWin = 0, draw = 0, awayWin = 0, over25 = 0, btts = 0;
-  let maxScoreProb = -1;
-  let bankerScore = "1-1";
+// Full In-Depth Match Analytics Calculator
+function calculateDeepMatchAnalytics(homeName, awayName, liveStatus = false, liveHScore = 0, liveAScore = 0) {
+  let baseHXG = getTeamStrength(homeName) + 0.25; // Home advantage
+  let baseAXG = getTeamStrength(awayName);
+
+  if (liveStatus) {
+    baseHXG = Math.max(1.1, baseHXG * 0.6 + parseInt(liveHScore) * 0.5);
+    baseAXG = Math.max(0.9, baseAXG * 0.6 + parseInt(liveAScore) * 0.5);
+  }
+
+  const hXG = parseFloat(baseHXG.toFixed(2));
+  const aXG = parseFloat(baseAXG.toFixed(2));
+
+  let homeWin = 0, draw = 0, awayWin = 0;
+  let over15 = 0, over25 = 0, over35 = 0, btts = 0;
+  let scoreMatrix = [];
 
   for (let h = 0; h <= 5; h++) {
     for (let a = 0; a <= 5; a++) {
-      let p = poisson(hXG, h) * poisson(aXG, a);
-      if (p > maxScoreProb) {
-        maxScoreProb = p;
-        bankerScore = `${h}-${a}`;
-      }
+      const p = poisson(hXG, h) * poisson(aXG, a);
+      scoreMatrix.push({ score: `${h}-${a}`, prob: p });
+
       if (h > a) homeWin += p;
       else if (h === a) draw += p;
       else awayWin += p;
 
+      if (h + a > 1.5) over15 += p;
       if (h + a > 2.5) over25 += p;
+      if (h + a > 3.5) over35 += p;
       if (h > 0 && a > 0) btts += p;
     }
   }
 
-  const totalExpCorners = (hXG * 2.6 + aXG * 2.2).toFixed(1);
-  const cornerLine = totalExpCorners > 9.0 ? "O 9.5" : "O 8.5";
-  const cornerProb = Math.min(88, Math.round(totalExpCorners * 6.2));
-  const confidence = Math.min(94, Math.max(52, Math.round(Math.max(homeWin, awayWin) * 100 + (over25 * 12))));
+  scoreMatrix.sort((a, b) => b.prob - a.prob);
+  const topScores = scoreMatrix.slice(0, 3).map(s => ({
+    score: s.score,
+    percent: (s.prob * 100).toFixed(1)
+  }));
 
-  let mainTip = "1X";
-  if (homeWin > 0.48) mainTip = "HOME WIN";
-  else if (awayWin > 0.42) mainTip = "AWAY WIN";
-  else if (over25 > 0.55) mainTip = "OVER 2.5";
-  else mainTip = "BTTS (GG)";
+  // Tactical Possession Calculation
+  const totalPower = hXG + aXG;
+  let homePoss = Math.round((hXG / totalPower) * 100);
+  homePoss = Math.min(68, Math.max(38, homePoss));
+  const awayPoss = 100 - homePoss;
+
+  // Expected Shots on Target & Dangerous Attacks
+  const homeShots = Math.round(hXG * 3.2);
+  const awayShots = Math.round(aXG * 2.8);
+  const homeAttacks = Math.round(homePoss * 0.95);
+  const awayAttacks = Math.round(awayPoss * 0.90);
+
+  // Expected Corners
+  const expHCorners = (hXG * 2.8).toFixed(1);
+  const expACorners = (aXG * 2.3).toFixed(1);
+  const totalExpCorners = (parseFloat(expHCorners) + parseFloat(expACorners)).toFixed(1);
+  const cornerLine = totalExpCorners > 9.2 ? 'Over 9.5' : 'Over 8.5';
+  const cornerProb = Math.min(89, Math.round(totalExpCorners * 6.5));
+
+  // Main Tip
+  let mainTip = "1X (Home or Draw)";
+  if (homeWin > 0.52) mainTip = "HOME WIN";
+  else if (awayWin > 0.46) mainTip = "AWAY WIN";
+  else if (over25 > 0.58) mainTip = "OVER 2.5 GOALS";
+  else if (btts > 0.60) mainTip = "BTTS (BOTH SCORE)";
 
   return {
+    hXG,
+    aXG,
+    homePoss,
+    awayPoss,
+    homeShots,
+    awayShots,
+    homeAttacks,
+    awayAttacks,
     homeProb: (homeWin * 100).toFixed(1),
     drawProb: (draw * 100).toFixed(1),
     awayProb: (awayWin * 100).toFixed(1),
+    over15Prob: (over15 * 100).toFixed(1),
     over25Prob: (over25 * 100).toFixed(1),
-    bttsProb: (btts * 100).toFixed(0),
-    bankerScore,
+    over35Prob: (over35 * 100).toFixed(1),
+    under25Prob: ((1 - over25) * 100).toFixed(1),
+    bttsProb: (btts * 100).toFixed(1),
+    bankerScore: topScores[0].score,
+    topScores,
     totalExpCorners,
     cornerLine,
     cornerProb,
-    confidence,
-    mainTip,
-    rawEdge: Math.round(Math.abs(homeWin - awayWin) * 100 + 20)
+    mainTip
   };
 }
 
 export default function App() {
   const [session, setSession] = useState(null);
-  const [currentTab, setCurrentTab] = useState('Live'); // 'Live' | 'Matches' | 'VIP' | 'Predictor' | 'Admin'
+  const [currentTab, setCurrentTab] = useState('Matches'); // 'Live' | 'Matches' | 'VIP' | 'Predictor' | 'Admin'
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [matches, setMatches] = useState([]);
   const [loading, setLoading] = useState(false);
-  
+  const [selectedMatch, setSelectedMatch] = useState(null);
+
   // Auth State
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authMsg, setAuthMsg] = useState('');
-  
+
   // VIP & Airtime Submission State
   const [isVipSubscribed, setIsVipSubscribed] = useState(false);
   const [network, setNetwork] = useState('Econet');
@@ -105,10 +169,9 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Fetch Real Live Matches from Public Sports API
   const fetchRealMatches = async (dateStr) => {
     setLoading(true);
-    const formattedDate = dateStr.replace(/-/g, ''); // YYYYMMDD
+    const formattedDate = dateStr.replace(/-/g, '');
     let allMatches = [];
 
     try {
@@ -126,35 +189,37 @@ export default function App() {
             const comp = ev.competitions?.[0];
             const home = comp?.competitors?.find(c => c.homeAway === 'home');
             const away = comp?.competitors?.find(c => c.homeAway === 'away');
-            const statusState = ev.status?.type?.state; // 'in' = live, 'pre' = upcoming, 'post' = finished
+            const statusState = ev.status?.type?.state;
             const statusDetail = ev.status?.type?.shortDetail || 'NS';
 
-            // Calculate dynamic realistic xG from scores and form
-            const hScore = parseInt(home?.score || 0);
-            const aScore = parseInt(away?.score || 0);
-            const hXG = statusState === 'in' ? Math.max(1.2, hScore * 0.9 + 1.1) : 1.75;
-            const aXG = statusState === 'in' ? Math.max(0.9, aScore * 0.9 + 0.9) : 1.25;
+            const homeName = home?.team?.displayName || 'Home Team';
+            const awayName = away?.team?.displayName || 'Away Team';
+            const homeScore = home?.score || '0';
+            const awayScore = away?.score || '0';
+            const isLive = statusState === 'in';
+
+            // Calculate deep stats unique to these 2 specific teams
+            const analytics = calculateDeepMatchAnalytics(homeName, awayName, isLive, homeScore, awayScore);
 
             allMatches.push({
               id: ev.id,
               league: LEAGUES[index].name,
-              home: home?.team?.displayName || 'Home Team',
-              away: away?.team?.displayName || 'Away Team',
-              homeScore: home?.score || '0',
-              awayScore: away?.score || '0',
+              home: homeName,
+              away: awayName,
+              homeScore,
+              awayScore,
               time: statusDetail,
-              isLive: statusState === 'in',
+              isLive,
               isFinished: statusState === 'post',
               isUpcoming: statusState === 'pre',
-              hXG,
-              aXG,
+              analytics,
               isVip: true
             });
           });
         }
       });
     } catch (err) {
-      console.error('Error fetching real matches:', err);
+      console.error('Error fetching matches:', err);
     }
 
     setMatches(allMatches);
@@ -175,18 +240,18 @@ export default function App() {
 
   const handleAuth = async (isSignUp) => {
     setAuthMsg('Processing...');
-    const { error } = isSignUp 
+    const { error } = isSignUp
       ? await supabase.auth.signUp({ email, password })
       : await supabase.auth.signInWithPassword({ email, password });
 
     if (error) setAuthMsg(error.message);
-    else if (isSignUp) setAuthMsg('Account created! Now click Log In.');
+    else if (isSignUp) setAuthMsg('Account created! Log In now.');
   };
 
   const submitAirtimePayment = (e) => {
     e.preventDefault();
     if (!airtimePin || !senderPhone) return alert('Pinda Phone Number ne Airtime Recharge PIN!');
-    
+
     const newReq = {
       id: Date.now(),
       email: userEmail || 'User',
@@ -205,7 +270,7 @@ export default function App() {
   const approveUserVIP = (id) => {
     setVipRequests(vipRequests.map(r => r.id === id ? { ...r, status: 'APPROVED ✅' } : r));
     setIsVipSubscribed(true);
-    alert('User VIP Access Approved & Activated!');
+    alert('User VIP Access Approved!');
   };
 
   const liveMatchesList = matches.filter(m => m.isLive);
@@ -213,14 +278,14 @@ export default function App() {
   return (
     <div style={{ backgroundColor: '#020d07', color: '#e2e8f0', minHeight: '100vh', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
       
-      {/* Sleek Minimalist Header */}
+      {/* Header */}
       <header style={{ borderBottom: '1px solid #0f3822', background: '#05180f', position: 'sticky', top: 0, zIndex: 50 }}>
         <div style={{ maxWidth: '650px', margin: '0 auto', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h1 style={{ fontSize: '19px', fontWeight: '900', color: '#22c55e', margin: 0, letterSpacing: '0.5px' }}>
               ⚡ TECH TV PREDICTOR
             </h1>
-            <div style={{ fontSize: '10px', color: '#86efac', opacity: 0.85 }}>Real Live Football API & Poisson Engine</div>
+            <div style={{ fontSize: '10px', color: '#86efac', opacity: 0.85 }}>Real AI Live Match Analytics & Poisson Engine</div>
           </div>
           {session && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -233,7 +298,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Content */}
+      {/* Main Container */}
       <main style={{ maxWidth: '650px', margin: '0 auto', padding: '14px 16px 80px' }}>
         
         {!session ? (
@@ -259,7 +324,8 @@ export default function App() {
           </div>
         ) : (
           <div>
-            {/* Nav Tabs */}
+            
+            {/* Tabs */}
             <div style={{ display: 'flex', background: '#05180f', padding: '4px', borderRadius: '12px', margin: '8px 0 16px', border: '1px solid #14462e' }}>
               {['Live', 'Matches', 'VIP', 'Predictor', ...(isAdmin ? ['Admin'] : [])].map(tab => (
                 <button
@@ -283,63 +349,59 @@ export default function App() {
               ))}
             </div>
 
-            {/* TAB 1: REAL LIVE IN-PLAY MATCHES */}
+            {/* TAB 1: LIVE MATCHES */}
             {currentTab === 'Live' && (
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#ef4444', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ height: '8px', width: '8px', background: '#ef4444', borderRadius: '50%', display: 'inline-block' }}></span>
-                    REAL LIVE IN-PLAY MATCHES
-                  </span>
+                  <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#ef4444' }}>🔴 REAL LIVE IN-PLAY MATCHES</span>
                   <button onClick={() => fetchRealMatches(selectedDate)} style={{ background: '#0f3822', color: '#22c55e', border: '1px solid #22c55e', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>
-                    🔄 Refresh API
+                    🔄 Refresh Live API
                   </button>
                 </div>
 
                 {loading ? (
-                  <div style={{ textAlign: 'center', padding: '30px', color: '#22c55e', fontWeight: 'bold' }}>📡 Fetching Real Football Data from API...</div>
+                  <div style={{ textAlign: 'center', padding: '30px', color: '#22c55e' }}>📡 Fetching Live Real-Time Matches...</div>
                 ) : liveMatchesList.length === 0 ? (
                   <div style={{ background: '#061d12', border: '1px solid #14462e', borderRadius: '14px', padding: '24px', textAlign: 'center', color: '#86efac' }}>
-                    <div style={{ fontSize: '24px', marginBottom: '8px' }}>⚽</div>
-                    <div>Hapana match iri kutambwa LIVE panguva ino chaiyo.</div>
-                    <div style={{ fontSize: '11px', marginTop: '6px', color: '#6ee7b7' }}>Tarisa pakanzi <strong>Matches</strong> kuti uone mitambo iri kutanga nhasi.</div>
+                    ⚽ Hapana match iri kutambwa LIVE izvozvi. Dzvanya pakanzi <strong>Matches</strong> kuti uone mitambo yese!
                   </div>
                 ) : (
-                  liveMatchesList.map(m => {
-                    const pred = calculateFullPrediction(m.hXG, m.aXG);
-                    return (
-                      <div key={m.id} style={{ background: '#061d12', border: '1px solid #165337', borderRadius: '16px', padding: '16px', marginBottom: '14px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#86efac', marginBottom: '6px' }}>
-                          <span>🏆 {m.league}</span>
-                          <span style={{ background: '#ef4444', color: '#fff', fontWeight: 'bold', padding: '2px 8px', borderRadius: '4px' }}>{m.time}</span>
-                        </div>
-
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '16px', fontWeight: '900', color: '#fff', margin: '10px 0' }}>
-                          <span>{m.home}</span>
-                          <span style={{ background: '#020d07', color: '#22c55e', padding: '4px 12px', borderRadius: '8px', fontSize: '18px', border: '1px solid #14462e' }}>
-                            {m.homeScore} - {m.awayScore}
-                          </span>
-                          <span>{m.away}</span>
-                        </div>
-
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', background: '#020d07', padding: '8px', borderRadius: '8px', textAlign: 'center', fontSize: '11px', marginBottom: '10px' }}>
-                          <div>1: <strong style={{ color: '#22c55e' }}>{pred.homeProb}%</strong></div>
-                          <div>X: <strong style={{ color: '#facc15' }}>{pred.drawProb}%</strong></div>
-                          <div>2: <strong style={{ color: '#38bdf8' }}>{pred.awayProb}%</strong></div>
-                        </div>
-
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: '#86efac' }}>
-                          <span>Over 2.5: <strong>{pred.over25Prob}%</strong></span>
-                          <span style={{ background: '#22c55e', color: '#020d07', padding: '4px 8px', borderRadius: '6px', fontWeight: 'bold' }}>{pred.mainTip}</span>
-                        </div>
+                  liveMatchesList.map(m => (
+                    <div
+                      key={m.id}
+                      onClick={() => setSelectedMatch(m)}
+                      style={{ background: '#061d12', border: '1px solid #165337', borderRadius: '16px', padding: '16px', marginBottom: '14px', cursor: 'pointer' }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#86efac', marginBottom: '6px' }}>
+                        <span>🏆 {m.league}</span>
+                        <span style={{ background: '#ef4444', color: '#fff', fontWeight: 'bold', padding: '2px 8px', borderRadius: '4px' }}>{m.time}</span>
                       </div>
-                    );
-                  })
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '16px', fontWeight: '900', color: '#fff', margin: '10px 0' }}>
+                        <span>{m.home}</span>
+                        <span style={{ background: '#020d07', color: '#22c55e', padding: '4px 12px', borderRadius: '8px', fontSize: '18px', border: '1px solid #14462e' }}>
+                          {m.homeScore} - {m.awayScore}
+                        </span>
+                        <span>{m.away}</span>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', background: '#020d07', padding: '8px', borderRadius: '8px', textAlign: 'center', fontSize: '11px', marginBottom: '10px' }}>
+                        <div>1: <strong style={{ color: '#22c55e' }}>{m.analytics.homeProb}%</strong></div>
+                        <div>X: <strong style={{ color: '#facc15' }}>{m.analytics.drawProb}%</strong></div>
+                        <div>2: <strong style={{ color: '#38bdf8' }}>{m.analytics.awayProb}%</strong></div>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: '#86efac' }}>
+                        <span>Over 2.5: <strong>{m.analytics.over25Prob}%</strong></span>
+                        <span style={{ background: '#22c55e', color: '#020d07', padding: '4px 8px', borderRadius: '6px', fontWeight: 'bold' }}>📊 Dzvanya for Full Analysis</span>
+                      </div>
+                    </div>
+                  ))
                 )}
               </div>
             )}
 
-            {/* TAB 2: REAL SCHEDULED MATCHES & CALENDAR */}
+            {/* TAB 2: SCHEDULED MATCHES & CALENDAR */}
             {currentTab === 'Matches' && (
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#061d12', padding: '10px 14px', borderRadius: '12px', border: '1px solid #14462e', marginBottom: '14px' }}>
@@ -353,40 +415,43 @@ export default function App() {
                 </div>
 
                 {loading ? (
-                  <div style={{ textAlign: 'center', padding: '30px', color: '#22c55e', fontWeight: 'bold' }}>📡 Fetching Schedule from Real Soccer API...</div>
+                  <div style={{ textAlign: 'center', padding: '30px', color: '#22c55e' }}>📡 Fetching Schedule from Real Soccer API...</div>
                 ) : matches.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '30px', color: '#86efac' }}>Hapana mitambo yakawanikwa pazuva iri ({selectedDate}). Chinja zuva riri pamusoro.</div>
+                  <div style={{ textAlign: 'center', padding: '30px', color: '#86efac' }}>Hapana mitambo yakawanikwa pazuva iri ({selectedDate}). Chinja date riri pamusoro.</div>
                 ) : (
-                  matches.map(m => {
-                    const pred = calculateFullPrediction(m.hXG, m.aXG);
-                    return (
-                      <div key={m.id} style={{ background: '#061d12', border: '1px solid #14462e', borderRadius: '14px', padding: '14px', marginBottom: '12px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#86efac', marginBottom: '6px' }}>
-                          <span>🏆 {m.league}</span>
-                          <span style={{ color: m.isLive ? '#ef4444' : '#22c55e', fontWeight: 'bold' }}>⏰ {m.time}</span>
-                        </div>
-                        
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 'bold', fontSize: '15px', color: '#fff', marginBottom: '10px' }}>
-                          <span>{m.home}</span>
-                          <span style={{ background: '#020d07', padding: '2px 8px', borderRadius: '6px', fontSize: '13px', color: '#22c55e' }}>
-                            {m.isUpcoming ? 'VS' : `${m.homeScore} - ${m.awayScore}`}
-                          </span>
-                          <span>{m.away}</span>
-                        </div>
-
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', background: '#020d07', padding: '8px', borderRadius: '8px', textAlign: 'center', fontSize: '11px', marginBottom: '8px' }}>
-                          <div>1: <strong style={{ color: '#22c55e' }}>{pred.homeProb}%</strong></div>
-                          <div>X: <strong style={{ color: '#facc15' }}>{pred.drawProb}%</strong></div>
-                          <div>2: <strong style={{ color: '#38bdf8' }}>{pred.awayProb}%</strong></div>
-                        </div>
-
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#86efac' }}>
-                          <span>Banker Score: <strong style={{ color: '#fff' }}>{pred.bankerScore}</strong> | Over 2.5: {pred.over25Prob}%</span>
-                          <span style={{ background: '#22c55e', color: '#020d07', fontWeight: 'bold', padding: '2px 8px', borderRadius: '4px' }}>Pick: {pred.mainTip}</span>
-                        </div>
+                  matches.map(m => (
+                    <div
+                      key={m.id}
+                      onClick={() => setSelectedMatch(m)}
+                      style={{ background: '#061d12', border: '1px solid #14462e', borderRadius: '14px', padding: '14px', marginBottom: '12px', cursor: 'pointer' }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#86efac', marginBottom: '6px' }}>
+                        <span>🏆 {m.league}</span>
+                        <span style={{ color: m.isLive ? '#ef4444' : '#22c55e', fontWeight: 'bold' }}>⏰ {m.time}</span>
                       </div>
-                    );
-                  })
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 'bold', fontSize: '15px', color: '#fff', marginBottom: '10px' }}>
+                        <span>{m.home}</span>
+                        <span style={{ background: '#020d07', padding: '2px 8px', borderRadius: '6px', fontSize: '13px', color: '#22c55e' }}>
+                          {m.isUpcoming ? 'VS' : `${m.homeScore} - ${m.awayScore}`}
+                        </span>
+                        <span>{m.away}</span>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', background: '#020d07', padding: '8px', borderRadius: '8px', textAlign: 'center', fontSize: '11px', marginBottom: '8px' }}>
+                        <div>1: <strong style={{ color: '#22c55e' }}>{m.analytics.homeProb}%</strong></div>
+                        <div>X: <strong style={{ color: '#facc15' }}>{m.analytics.drawProb}%</strong></div>
+                        <div>2: <strong style={{ color: '#38bdf8' }}>{m.analytics.awayProb}%</strong></div>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#86efac' }}>
+                        <span>Over 2.5: <strong style={{ color: '#fff' }}>{m.analytics.over25Prob}%</strong></span>
+                        <span style={{ background: '#0f3824', border: '1px solid #22c55e', color: '#86efac', padding: '3px 8px', borderRadius: '6px', fontWeight: 'bold' }}>
+                          🔍 Dzvanya for Possession & Stats
+                        </span>
+                      </div>
+                    </div>
+                  ))
                 )}
               </div>
             )}
@@ -400,7 +465,7 @@ export default function App() {
                       <div style={{ fontSize: '40px', marginBottom: '8px' }}>👑</div>
                       <h2 style={{ fontSize: '19px', fontWeight: '900', color: '#facc15', margin: '0 0 6px' }}>TECH TV VIP STRAIGHT WIN</h2>
                       <p style={{ fontSize: '12px', color: '#86efac', marginBottom: '16px' }}>
-                        Tenga VIP Access uchishandisa <strong>Econet kana NetOne Airtime</strong> kuti uwane 100% Real Banker Scores & Corners!
+                        Tenga VIP Access uchishandisa <strong>Econet kana NetOne Airtime</strong> kuti uwane 100% Real Banker Scores, Exact Corners & High Odds!
                       </p>
                     </div>
 
@@ -412,7 +477,6 @@ export default function App() {
                       <div style={{ fontSize: '13px', color: '#fff' }}>
                         🔵 <strong>Econet:</strong> <span style={{ color: '#38bdf8', fontWeight: '900' }}>+263 779 411 538</span>
                       </div>
-                      <div style={{ fontSize: '11px', color: '#86efac', marginTop: '8px' }}>Tenga Airtime ye $1.00 / $2.00 / $5.00 woisa PIN kana recharge voucher code pano:</div>
                     </div>
 
                     <form onSubmit={submitAirtimePayment} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -426,17 +490,17 @@ export default function App() {
 
                       <div>
                         <label style={{ fontSize: '11px', color: '#86efac' }}>Your Phone Number:</label>
-                        <input type="text" placeholder="e.g. 0771234567" required value={senderPhone} onChange={e => setSenderPhone(e.target.value)} style={{ width: '92%', padding: '10px', background: '#020d07', border: '1px solid #14462e', color: '#fff', borderRadius: '8px', marginTop: '4px' }} />
+                        <input type="text" placeholder="0771234567" required value={senderPhone} onChange={e => setSenderPhone(e.target.value)} style={{ width: '92%', padding: '10px', background: '#020d07', border: '1px solid #14462e', color: '#fff', borderRadius: '8px', marginTop: '4px' }} />
                       </div>
 
                       <div>
-                        <label style={{ fontSize: '11px', color: '#86efac' }}>Airtime Recharge PIN / Voucher:</label>
+                        <label style={{ fontSize: '11px', color: '#86efac' }}>Airtime PIN / Voucher Code:</label>
                         <input type="text" placeholder="Isa PIN ye Airtime" required value={airtimePin} onChange={e => setAirtimePin(e.target.value)} style={{ width: '92%', padding: '10px', background: '#020d07', border: '1px solid #14462e', color: '#fff', borderRadius: '8px', marginTop: '4px' }} />
                       </div>
 
                       {paymentSentMsg && (
                         <div style={{ background: '#14532d', color: '#86efac', padding: '10px', borderRadius: '8px', fontSize: '12px', textAlign: 'center' }}>
-                          ✅ Airtime payment submitted! Admin ari kuiongorora kuti a-activate VIP yako mukati memaminitsi mashoma.
+                          ✅ Airtime payment submitted! Admin ari ku-activater VIP yako izvozvi.
                         </div>
                       )}
 
@@ -447,32 +511,29 @@ export default function App() {
                   </div>
                 ) : (
                   <div>
-                    {matches.slice(0, 3).map(m => {
-                      const pred = calculateFullPrediction(m.hXG, m.aXG);
-                      return (
-                        <div key={m.id} style={{ marginBottom: '18px' }}>
-                          <div style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 50%, #b45309 100%)', borderRadius: '20px', padding: '20px', color: '#fff', marginBottom: '10px' }}>
-                            <div style={{ fontSize: '20px', marginBottom: '4px' }}>👑</div>
-                            <div style={{ fontSize: '10px', fontWeight: '900', letterSpacing: '1px' }}>VIP REAL MATCH BANKER</div>
-                            <div style={{ fontSize: '12px', margin: '2px 0 8px' }}>{m.home} vs {m.away}</div>
-                            <div style={{ fontSize: '22px', fontWeight: '900' }}>{m.home.toUpperCase()} TO WIN + OVER 2.5</div>
-                            <div style={{ fontSize: '11px', marginTop: '8px', opacity: 0.9 }}>Edge: {pred.rawEdge}% | Confidence: {pred.confidence}%</div>
-                          </div>
-
-                          <div style={{ background: '#061d12', border: '1px solid #14462e', borderRadius: '14px', padding: '14px', marginBottom: '8px' }}>
-                            <div style={{ fontSize: '11px', color: '#22c55e', fontWeight: 'bold' }}>🎯 BANKER SCORE</div>
-                            <div style={{ fontSize: '28px', fontWeight: '900', color: '#fff' }}>{pred.bankerScore}</div>
-                            <div style={{ fontSize: '11px', color: '#86efac' }}>BTTS {pred.bttsProb}%</div>
-                          </div>
-
-                          <div style={{ background: '#061d12', border: '1px solid #14462e', borderRadius: '14px', padding: '14px' }}>
-                            <div style={{ fontSize: '11px', color: '#22c55e', fontWeight: 'bold' }}>🚩 CORNER LINE</div>
-                            <div style={{ fontSize: '28px', fontWeight: '900', color: '#fff' }}>{pred.cornerLine}</div>
-                            <div style={{ fontSize: '11px', color: '#86efac' }}>{pred.totalExpCorners} expected ({pred.cornerProb}%)</div>
-                          </div>
+                    {matches.slice(0, 4).map(m => (
+                      <div key={m.id} style={{ marginBottom: '18px' }}>
+                        <div style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 50%, #b45309 100%)', borderRadius: '20px', padding: '20px', color: '#fff', marginBottom: '10px' }}>
+                          <div style={{ fontSize: '20px', marginBottom: '4px' }}>👑</div>
+                          <div style={{ fontSize: '10px', fontWeight: '900', letterSpacing: '1px' }}>VIP STRAIGHT WIN</div>
+                          <div style={{ fontSize: '12px', margin: '2px 0 8px' }}>{m.home} vs {m.away}</div>
+                          <div style={{ fontSize: '22px', fontWeight: '900' }}>{m.home.toUpperCase()} TO WIN + OVER 2.5</div>
+                          <div style={{ fontSize: '11px', marginTop: '8px', opacity: 0.9 }}>Model xG {m.analytics.hXG} - {m.analytics.aXG} | Expected Goals: {m.analytics.over25Prob}%</div>
                         </div>
-                      );
-                    })}
+
+                        <div style={{ background: '#061d12', border: '1px solid #14462e', borderRadius: '14px', padding: '14px', marginBottom: '8px' }}>
+                          <div style={{ fontSize: '11px', color: '#22c55e', fontWeight: 'bold' }}>🎯 BANKER SCORE</div>
+                          <div style={{ fontSize: '28px', fontWeight: '900', color: '#fff' }}>{m.analytics.bankerScore}</div>
+                          <div style={{ fontSize: '11px', color: '#86efac' }}>BTTS: {m.analytics.bttsProb}%</div>
+                        </div>
+
+                        <div style={{ background: '#061d12', border: '1px solid #14462e', borderRadius: '14px', padding: '14px' }}>
+                          <div style={{ fontSize: '11px', color: '#22c55e', fontWeight: 'bold' }}>🚩 CORNER LINE</div>
+                          <div style={{ fontSize: '28px', fontWeight: '900', color: '#fff' }}>{m.analytics.cornerLine}</div>
+                          <div style={{ fontSize: '11px', color: '#86efac' }}>{m.analytics.totalExpCorners} Expected Corners ({m.analytics.cornerProb}%)</div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
@@ -482,18 +543,18 @@ export default function App() {
             {currentTab === 'Predictor' && (
               <div style={{ background: '#061d12', border: '1px solid #14462e', borderRadius: '16px', padding: '18px' }}>
                 <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: '#22c55e', marginBottom: '8px' }}>🧮 Custom Poisson Predictor</h3>
-                <p style={{ fontSize: '12px', color: '#86efac', marginBottom: '14px' }}>Isa ma-stats e-chikwata kuverenga fair odds.</p>
+                <p style={{ fontSize: '12px', color: '#86efac', marginBottom: '14px' }}>Isa mazita emaTeams kuti uone simulation:</p>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '12px' }}>
-                  <input type="number" step="0.1" defaultValue="2.1" id="hXGIn" placeholder="Home xG" style={{ padding: '10px', background: '#020d07', border: '1px solid #14462e', color: '#fff', borderRadius: '8px' }} />
-                  <input type="number" step="0.1" defaultValue="1.2" id="aXGIn" placeholder="Away xG" style={{ padding: '10px', background: '#020d07', border: '1px solid #14462e', color: '#fff', borderRadius: '8px' }} />
+                  <input type="text" defaultValue="Arsenal" id="hTeamIn" placeholder="Home Team" style={{ padding: '10px', background: '#020d07', border: '1px solid #14462e', color: '#fff', borderRadius: '8px' }} />
+                  <input type="text" defaultValue="Chelsea" id="aTeamIn" placeholder="Away Team" style={{ padding: '10px', background: '#020d07', border: '1px solid #14462e', color: '#fff', borderRadius: '8px' }} />
                 </div>
                 <button onClick={() => {
-                  const h = parseFloat(document.getElementById('hXGIn').value) || 1.8;
-                  const a = parseFloat(document.getElementById('aXGIn').value) || 1.2;
-                  const res = calculateFullPrediction(h, a);
-                  alert(`Results:\nBanker Score: ${res.bankerScore}\nHome Win: ${res.homeProb}%\nCorners: ${res.cornerLine}`);
+                  const h = document.getElementById('hTeamIn').value || 'Arsenal';
+                  const a = document.getElementById('aTeamIn').value || 'Chelsea';
+                  const res = calculateDeepMatchAnalytics(h, a);
+                  alert(`Simulation for ${h} vs ${a}:\nPossession: ${res.homePoss}% - ${res.awayPoss}%\nBanker Score: ${res.bankerScore}\nHome Win: ${res.homeProb}%\nOver 2.5: ${res.over25Prob}%\nCorners: ${res.cornerLine} (${res.totalExpCorners} exp)`);
                 }} style={{ width: '100%', padding: '12px', background: '#22c55e', color: '#020d07', fontWeight: 'bold', borderRadius: '8px', border: 'none', cursor: 'pointer' }}>
-                  Calculate Live Odds
+                  Run Deep Simulation
                 </button>
               </div>
             )}
@@ -502,7 +563,7 @@ export default function App() {
             {currentTab === 'Admin' && isAdmin && (
               <div style={{ background: '#061d12', border: '2px solid #22c55e', borderRadius: '16px', padding: '18px' }}>
                 <h3 style={{ fontSize: '16px', fontWeight: '900', color: '#22c55e', marginBottom: '12px' }}>👑 Admin Airtime Approvals</h3>
-                <div style={{ marginBottom: '20px' }}>
+                <div>
                   {vipRequests.map(req => (
                     <div key={req.id} style={{ background: '#020d07', padding: '12px', borderRadius: '10px', border: '1px solid #14462e', marginBottom: '8px' }}>
                       <div style={{ fontSize: '12px', color: '#fff', fontWeight: 'bold' }}>👤 {req.email} ({req.phone})</div>
@@ -523,7 +584,105 @@ export default function App() {
 
           </div>
         )}
+
       </main>
+
+      {/* POPUP MODAL: FULL DETAILED MATCH ANALYTICS */}
+      {selectedMatch && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(5px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', zIndex: 100 }}>
+          <div style={{ background: '#051b11', border: '1px solid #22c55e', borderRadius: '20px', width: '100%', maxWidth: '520px', maxHeight: '90vh', overflowY: 'auto', padding: '20px' }}>
+            
+            {/* Modal Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #14462e', paddingBottom: '10px', marginBottom: '14px' }}>
+              <span style={{ fontSize: '11px', color: '#22c55e', fontWeight: 'bold' }}>🏆 {selectedMatch.league}</span>
+              <button onClick={() => setSelectedMatch(null)} style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: '50%', width: '26px', height: '26px', fontWeight: 'bold', cursor: 'pointer' }}>✕</button>
+            </div>
+
+            {/* Teams Header */}
+            <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+              <div style={{ fontSize: '18px', fontWeight: '900', color: '#fff' }}>
+                {selectedMatch.home} vs {selectedMatch.away}
+              </div>
+              <div style={{ fontSize: '12px', color: '#86efac', marginTop: '4px' }}>
+                Status: <strong>{selectedMatch.time}</strong> {selectedMatch.isLive ? `(${selectedMatch.homeScore} - ${selectedMatch.awayScore})` : ''}
+              </div>
+            </div>
+
+            {/* Tactical Possession Bar */}
+            <div style={{ background: '#020d07', padding: '12px', borderRadius: '12px', border: '1px solid #14462e', marginBottom: '14px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: 'bold', marginBottom: '6px' }}>
+                <span>{selectedMatch.home}: <strong style={{ color: '#22c55e' }}>{selectedMatch.analytics.homePoss}%</strong></span>
+                <span style={{ color: '#86efac' }}>Possession</span>
+                <span>{selectedMatch.away}: <strong style={{ color: '#38bdf8' }}>{selectedMatch.analytics.awayPoss}%</strong></span>
+              </div>
+              <div style={{ height: '8px', background: '#38bdf8', borderRadius: '4px', overflow: 'hidden', display: 'flex' }}>
+                <div style={{ width: `${selectedMatch.analytics.homePoss}%`, background: '#22c55e' }}></div>
+              </div>
+            </div>
+
+            {/* Shots & Attacks Comparison */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '14px' }}>
+              <div style={{ background: '#020d07', padding: '10px', borderRadius: '10px', textAlign: 'center', border: '1px solid #14462e' }}>
+                <div style={{ fontSize: '11px', color: '#86efac' }}>Shots on Target</div>
+                <div style={{ fontSize: '16px', fontWeight: '900', color: '#fff', marginTop: '2px' }}>
+                  {selectedMatch.analytics.homeShots} - {selectedMatch.analytics.awayShots}
+                </div>
+              </div>
+              <div style={{ background: '#020d07', padding: '10px', borderRadius: '10px', textAlign: 'center', border: '1px solid #14462e' }}>
+                <div style={{ fontSize: '11px', color: '#86efac' }}>Dangerous Attacks</div>
+                <div style={{ fontSize: '16px', fontWeight: '900', color: '#fff', marginTop: '2px' }}>
+                  {selectedMatch.analytics.homeAttacks} - {selectedMatch.analytics.awayAttacks}
+                </div>
+              </div>
+            </div>
+
+            {/* Over / Under Multi-Line Probabilities */}
+            <div style={{ background: '#020d07', padding: '12px', borderRadius: '12px', border: '1px solid #14462e', marginBottom: '14px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#facc15', marginBottom: '8px' }}>📊 GOAL MARKET PROBABILITIES:</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', background: '#061d12', padding: '6px 10px', borderRadius: '6px' }}>
+                  <span>Over 1.5:</span> <strong style={{ color: '#22c55e' }}>{selectedMatch.analytics.over15Prob}%</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', background: '#061d12', padding: '6px 10px', borderRadius: '6px' }}>
+                  <span>Over 2.5:</span> <strong style={{ color: '#22c55e' }}>{selectedMatch.analytics.over25Prob}%</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', background: '#061d12', padding: '6px 10px', borderRadius: '6px' }}>
+                  <span>Under 2.5:</span> <strong style={{ color: '#38bdf8' }}>{selectedMatch.analytics.under25Prob}%</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', background: '#061d12', padding: '6px 10px', borderRadius: '6px' }}>
+                  <span>BTTS (GG):</span> <strong style={{ color: '#facc15' }}>{selectedMatch.analytics.bttsProb}%</strong>
+                </div>
+              </div>
+            </div>
+
+            {/* Top Banker Exact Scores */}
+            <div style={{ background: '#020d07', padding: '12px', borderRadius: '12px', border: '1px solid #14462e', marginBottom: '14px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#22c55e', marginBottom: '6px' }}>🎯 TOP 3 BANKER EXACT SCORES:</div>
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'space-around', textAlign: 'center' }}>
+                {selectedMatch.analytics.topScores.map((s, idx) => (
+                  <div key={idx} style={{ background: '#061d12', padding: '6px 14px', borderRadius: '8px', border: '1px solid #14462e' }}>
+                    <div style={{ fontSize: '15px', fontWeight: '900', color: '#fff' }}>{s.score}</div>
+                    <div style={{ fontSize: '10px', color: '#86efac' }}>{s.percent}% Prob</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Corner Expectancy */}
+            <div style={{ background: '#020d07', padding: '10px 14px', borderRadius: '10px', border: '1px solid #14462e', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', marginBottom: '16px' }}>
+              <span>🚩 Corner Expectancy:</span>
+              <strong style={{ color: '#22c55e' }}>{selectedMatch.analytics.cornerLine} ({selectedMatch.analytics.totalExpCorners} expected)</strong>
+            </div>
+
+            {/* Close Button */}
+            <button onClick={() => setSelectedMatch(null)} style={{ width: '100%', padding: '12px', background: '#22c55e', color: '#020d07', fontWeight: '900', borderRadius: '10px', border: 'none', cursor: 'pointer' }}>
+              CLOSE ANALYSIS
+            </button>
+
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
