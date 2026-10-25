@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://techtv-predictor-hub.vercel.app/sitemap.xml
+Sitemap: https://techtv-pro-odds.vercel.app/sitemap.xml
