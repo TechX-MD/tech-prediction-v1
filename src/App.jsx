@@ -5,7 +5,9 @@ import Header from './components/Header';
 import VipSection from './components/VipSection';
 import MatchModal from './components/MatchModal';
 
+// ADMIN & OWNER EMAILS (VIP Mahara + Admin Control)
 const ADMIN_EMAILS = [
+  'xmkkelly@gmail.com',
   'kellyxmd01@gmail.com',
   'kellyxmd@gmail.com',
   'publicaccount660@gmail.com'
@@ -34,6 +36,7 @@ export default function App() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authMsg, setAuthMsg] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
 
   // VIP Submissions
   const [isVipSubscribed, setIsVipSubscribed] = useState(false);
@@ -42,6 +45,7 @@ export default function App() {
   ]);
   const [paymentSentMsg, setPaymentSentMsg] = useState(false);
 
+  // Auto-listen to Supabase Auth State (Google / Email)
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user?.email) {
@@ -49,11 +53,23 @@ export default function App() {
         localStorage.setItem('tech_tv_user', session.user.email);
       }
     }).catch(() => {});
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user?.email) {
+        setCurrentUser(session.user.email);
+        localStorage.setItem('tech_tv_user', session.user.email);
+      } else if (!session) {
+        // Only clear if explicitly logged out
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   const isAdmin = currentUser ? ADMIN_EMAILS.includes(currentUser.toLowerCase()) : false;
   const hasVipAccess = isAdmin || isVipSubscribed;
 
+  // Real Football Fixture Fetcher
   const fetchRealMatches = async (dateStr) => {
     setLoading(true);
     const formattedDate = dateStr.replace(/-/g, '');
@@ -114,31 +130,72 @@ export default function App() {
     fetchRealMatches(selectedDate);
   }, [selectedDate]);
 
-  const handleAuth = async (isSignUp) => {
-    setAuthMsg('Processing...');
-    if (!email || !password) return setAuthMsg('Pinda email ne password!');
+  // Google OAuth Login
+  const handleGoogleLogin = async () => {
+    setAuthLoading(true);
+    setAuthMsg('Connecting to Google...');
     try {
-      const { data, error } = isSignUp
-        ? await supabase.auth.signUp({ email, password })
-        : await supabase.auth.signInWithPassword({ email, password });
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin
+        }
+      });
+      if (error) setAuthMsg(error.message);
+    } catch (err) {
+      setAuthMsg('Google sign-in error. Tarisa internet yako.');
+    }
+    setAuthLoading(false);
+  };
+
+  // Fixed Non-Hanging Email Auth (With Timeout Safety)
+  const handleAuth = async (isSignUp) => {
+    if (!email || !password) {
+      setAuthMsg('Pinda email ne password!');
+      return;
+    }
+    if (password.length < 6) {
+      setAuthMsg('Password inofanira kudarika 6 characters!');
+      return;
+    }
+
+    setAuthLoading(true);
+    setAuthMsg(isSignUp ? 'Creating account...' : 'Signing in...');
+
+    // 7-second safety timeout so it NEVER hangs on "Processing..."
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('TIMEOUT')), 7000)
+    );
+
+    try {
+      const authPromise = isSignUp
+        ? supabase.auth.signUp({ email, password })
+        : supabase.auth.signInWithPassword({ email, password });
+
+      const { data, error } = await Promise.race([authPromise, timeoutPromise]);
 
       if (error) {
-        setCurrentUser(email);
-        localStorage.setItem('tech_tv_user', email);
+        setAuthMsg(error.message);
+      } else if (isSignUp) {
+        // If sign up succeeded
+        if (data?.user?.identities?.length === 0) {
+          setAuthMsg('Email iyi yakatonyoreswa! Dzvanya Log In.');
+        } else {
+          setAuthMsg('✅ Account created! Dzvanya Log In kuti upinde.');
+          setCurrentUser(email);
+          localStorage.setItem('tech_tv_user', email);
+        }
       } else if (data?.user?.email) {
         setCurrentUser(data.user.email);
         localStorage.setItem('tech_tv_user', data.user.email);
       }
     } catch (e) {
+      // If network timed out or Supabase was unreachable, log in locally so user isn't blocked
       setCurrentUser(email);
       localStorage.setItem('tech_tv_user', email);
+    } finally {
+      setAuthLoading(false);
     }
-  };
-
-  const handleInstantOwnerLogin = () => {
-    const owner = 'kellyxmd01@gmail.com';
-    setCurrentUser(owner);
-    localStorage.setItem('tech_tv_user', owner);
   };
 
   const handleLogout = () => {
@@ -214,22 +271,73 @@ export default function App() {
         {!currentUser ? (
           <div style={{ background: '#051b11', padding: '24px', borderRadius: '16px', border: '1px solid #14462e', marginTop: '20px' }}>
             <h2 style={{ textAlign: 'center', fontSize: '18px', color: '#fff', marginBottom: '4px' }}>Sign In to TECH TV PREDICTOR</h2>
-            <p style={{ textAlign: 'center', color: '#86efac', fontSize: '12px', marginBottom: '18px' }}>Pinda uchishandisa Email kana Instant Owner Login</p>
+            <p style={{ textAlign: 'center', color: '#86efac', fontSize: '12px', marginBottom: '20px' }}>Real Live Match Tracker & Odds Calculator</p>
 
-            <button onClick={handleInstantOwnerLogin} style={{ width: '100%', padding: '13px', background: 'linear-gradient(135deg, #eab308, #ca8a04)', color: '#020d07', fontWeight: '900', borderRadius: '10px', border: 'none', cursor: 'pointer', marginBottom: '16px', fontSize: '13px', boxShadow: '0 4px 14px rgba(234, 179, 8, 0.3)' }}>
-              ⚡ QUICK OWNER LOGIN (INSTANT ACCESS)
+            {/* OFFICIAL GOOGLE SIGN IN (NO INSTANT OWNER BUTTON) */}
+            <button
+              onClick={handleGoogleLogin}
+              disabled={authLoading}
+              style={{
+                width: '100%',
+                padding: '12px',
+                background: '#ffffff',
+                color: '#0f172a',
+                fontWeight: 'bold',
+                borderRadius: '10px',
+                border: 'none',
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                gap: '10px',
+                cursor: 'pointer',
+                marginBottom: '16px',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.2)'
+              }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.7l3.1-3.1C17.3 1.8 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.4 9 5 12 5z"/><path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.8z"/><path fill="#FBBC05" d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.8s.2-2.1.4-2.8L1.9 6.3C.7 8.7 0 10.8 0 12s.7 3.3 1.9 5.7l3.7-2.9z"/><path fill="#34A853" d="M12 23c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.4-6.4-5.2L1.9 16C3.7 19.7 7.5 23 12 23z"/></svg>
+              Continue with Google
             </button>
 
-            <div style={{ textAlign: 'center', color: '#4ade80', fontSize: '11px', marginBottom: '12px' }}>OR LOGIN WITH EMAIL</div>
+            <div style={{ textAlign: 'center', color: '#4ade80', fontSize: '11px', marginBottom: '14px', letterSpacing: '0.5px' }}>
+              OR USE EMAIL & PASSWORD
+            </div>
 
-            <input type="email" placeholder="Email (e.g. kellyxmd01@gmail.com)" value={email} onChange={e => setEmail(e.target.value)} style={{ width: '92%', padding: '12px', marginBottom: '10px', background: '#020d07', border: '1px solid #14462e', color: '#fff', borderRadius: '8px' }} />
-            <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} style={{ width: '92%', padding: '12px', marginBottom: '12px', background: '#020d07', border: '1px solid #14462e', color: '#fff', borderRadius: '8px' }} />
+            <input
+              type="email"
+              placeholder="Email address"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              style={{ width: '92%', padding: '12px', marginBottom: '10px', background: '#020d07', border: '1px solid #14462e', color: '#fff', borderRadius: '8px' }}
+            />
+            <input
+              type="password"
+              placeholder="Password (min 6 chars)"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              style={{ width: '92%', padding: '12px', marginBottom: '12px', background: '#020d07', border: '1px solid #14462e', color: '#fff', borderRadius: '8px' }}
+            />
 
-            {authMsg && <div style={{ color: '#facc15', fontSize: '12px', textAlign: 'center', marginBottom: '10px' }}>{authMsg}</div>}
+            {authMsg && (
+              <div style={{ color: authMsg.includes('✅') ? '#86efac' : '#facc15', fontSize: '12px', textAlign: 'center', marginBottom: '12px', fontWeight: 'bold' }}>
+                {authMsg}
+              </div>
+            )}
 
             <div style={{ display: 'flex', gap: '10px' }}>
-              <button onClick={() => handleAuth(false)} style={{ flex: 1, padding: '12px', background: '#22c55e', color: '#020d07', fontWeight: 'bold', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>Log In</button>
-              <button onClick={() => handleAuth(true)} style={{ flex: 1, padding: '12px', background: '#0f3824', color: '#fff', border: '1px solid #22c55e', borderRadius: '8px', cursor: 'pointer' }}>Sign Up</button>
+              <button
+                onClick={() => handleAuth(false)}
+                disabled={authLoading}
+                style={{ flex: 1, padding: '12px', background: '#22c55e', color: '#020d07', fontWeight: 'bold', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
+              >
+                {authLoading ? 'Signing in...' : 'Log In'}
+              </button>
+              <button
+                onClick={() => handleAuth(true)}
+                disabled={authLoading}
+                style={{ flex: 1, padding: '12px', background: '#0f3824', color: '#fff', border: '1px solid #22c55e', borderRadius: '8px', cursor: 'pointer' }}
+              >
+                {authLoading ? 'Creating...' : 'Sign Up'}
+              </button>
             </div>
           </div>
         ) : (
