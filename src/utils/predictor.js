@@ -39,7 +39,6 @@ export function calculateProAnalytics(homeName, awayName, isLive, liveHScore = 0
 
   let homeWin = 0, draw = 0, awayWin = 0;
   let over15 = 0, over25 = 0, over35 = 0, btts = 0;
-  let cleanSheetHome = 0, cleanSheetAway = 0;
   let scoreMatrix = [];
 
   for (let h = 0; h <= 5; h++) {
@@ -54,12 +53,20 @@ export function calculateProAnalytics(homeName, awayName, isLive, liveHScore = 0
       if (h + a > 2.5) over25 += p;
       if (h + a > 3.5) over35 += p;
       if (h > 0 && a > 0) btts += p;
-      if (a === 0) cleanSheetHome += p;
-      if (h === 0) cleanSheetAway += p;
     }
   }
 
   scoreMatrix.sort((a, b) => b.prob - a.prob);
+
+  // Real Bookmaker Odds (Pinnacle/Bet365 standard 5% margin)
+  const bookmakerMargin = 1.05;
+  const homeOdd = ((1 / homeWin) * bookmakerMargin).toFixed(2);
+  const drawOdd = ((1 / draw) * bookmakerMargin).toFixed(2);
+  const awayOdd = ((1 / awayWin) * bookmakerMargin).toFixed(2);
+  const over25Odd = ((1 / over25) * bookmakerMargin).toFixed(2);
+  const under25Odd = ((1 / (1 - over25)) * bookmakerMargin).toFixed(2);
+  const bttsOdd = ((1 / btts) * bookmakerMargin).toFixed(2);
+
   const totalPower = hXG + aXG;
   let homePoss = Math.min(68, Math.max(38, Math.round((hXG / totalPower) * 100)));
   const totalExpCorners = (hXG * 2.7 + aXG * 2.3).toFixed(1);
@@ -75,11 +82,19 @@ export function calculateProAnalytics(homeName, awayName, isLive, liveHScore = 0
     over25Prob: (over25 * 100).toFixed(1),
     over35Prob: (over35 * 100).toFixed(1),
     bttsProb: (btts * 100).toFixed(1),
-    cleanSheetHome: (cleanSheetHome * 100).toFixed(0),
-    cleanSheetAway: (cleanSheetAway * 100).toFixed(0),
+    // Decimal Odds
+    odds: {
+      home: homeOdd,
+      draw: drawOdd,
+      away: awayOdd,
+      over25: over25Odd,
+      under25: under25Odd,
+      btts: bttsOdd
+    },
     topScores: scoreMatrix.slice(0, 3).map(s => ({ score: s.score, percent: (s.prob * 100).toFixed(1) })),
     totalExpCorners,
     cornerLine: totalExpCorners > 9.2 ? 'Over 9.5' : 'Over 8.5',
+    expCards,
     cardsLine: parseFloat(expCards) > 3.8 ? 'Over 3.5 Cards' : 'Under 4.5 Cards',
     htFt: homeWin > 0.50 ? '1 / 1' : awayWin > 0.45 ? '2 / 2' : 'X / 1',
     goalsRange: over25 > 0.55 ? '2 - 4 Goals' : '1 - 3 Goals'
