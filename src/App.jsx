@@ -1,14 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabase';
 import { calculateProAnalytics } from './utils/predictor';
+import Header from './components/Header';
 import VipSection from './components/VipSection';
 import MatchModal from './components/MatchModal';
 
+// ADMIN EMAILS (Taisa zvese zvaungashandise kuti Admin iite active 100%)
 const ADMIN_EMAILS = [
+  'publicaccount660@gmail.com',
+  'publicacount660@gmail.com',
+  'telegramfast660@gmail.com',
   'xmkkelly@gmail.com',
   'kellyxmd01@gmail.com',
-  'kellyxmd@gmail.com',
-  'publicaccount660@gmail.com'
+  'kellyxmd@gmail.com'
 ];
 
 const LEAGUES = [
@@ -22,7 +26,7 @@ const LEAGUES = [
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState(() => localStorage.getItem('tech_tv_user') || null);
-  const [currentTab, setCurrentTab] = useState('Live'); // 'Live' | 'Matches' | 'VIP' | 'Predictor' | 'Admin'
+  const [currentTab, setCurrentTab] = useState('Matches');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [matches, setMatches] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -44,16 +48,31 @@ export default function App() {
   ]);
   const [paymentSentMsg, setPaymentSentMsg] = useState(false);
 
+  // REAL-TIME SUPABASE AUTH LISTENER (Catch Google Login instantly)
   useEffect(() => {
+    // 1. Initial check
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user?.email) {
-        setCurrentUser(session.user.email);
-        localStorage.setItem('tech_tv_user', session.user.email);
+        const userEmail = session.user.email.toLowerCase();
+        setCurrentUser(userEmail);
+        localStorage.setItem('tech_tv_user', userEmail);
       }
     }).catch(() => {});
+
+    // 2. Real-time auth state change (Catches OAuth Redirects immediately)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user?.email) {
+        const userEmail = session.user.email.toLowerCase();
+        setCurrentUser(userEmail);
+        localStorage.setItem('tech_tv_user', userEmail);
+        setShowAuthModal(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  const isAdmin = currentUser ? ADMIN_EMAILS.includes(currentUser.toLowerCase()) : false;
+  const isAdmin = currentUser ? ADMIN_EMAILS.some(a => currentUser.toLowerCase().includes(a.toLowerCase())) : false;
   const hasVipAccess = isAdmin || isVipSubscribed;
 
   const fetchRealMatches = async (dateStr) => {
@@ -118,11 +137,15 @@ export default function App() {
 
   const handleGoogleLogin = async () => {
     setAuthLoading(true);
+    setAuthMsg('Connecting to Google...');
     try {
-      await supabase.auth.signInWithOAuth({
+      const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
-        options: { redirectTo: 'https://techtv-pro-odds.vercel.app' }
+        options: {
+          redirectTo: 'https://techtv-pro-odds.vercel.app'
+        }
       });
+      if (error) setAuthMsg(error.message);
     } catch (err) {
       setAuthMsg('Google sign in error.');
     }
@@ -142,21 +165,23 @@ export default function App() {
       if (error) {
         setAuthMsg(error.message);
       } else if (data?.user?.email) {
-        setCurrentUser(data.user.email);
-        localStorage.setItem('tech_tv_user', data.user.email);
+        const u = data.user.email.toLowerCase();
+        setCurrentUser(u);
+        localStorage.setItem('tech_tv_user', u);
         setShowAuthModal(false);
       }
     } catch (e) {
-      setCurrentUser(email);
-      localStorage.setItem('tech_tv_user', email);
+      const u = email.toLowerCase();
+      setCurrentUser(u);
+      localStorage.setItem('tech_tv_user', u);
       setShowAuthModal(false);
     } finally {
       setAuthLoading(false);
     }
   };
 
-  const handleLogout = () => {
-    supabase.auth.signOut().catch(() => {});
+  const handleLogout = async () => {
+    await supabase.auth.signOut().catch(() => {});
     localStorage.removeItem('tech_tv_user');
     setCurrentUser(null);
   };
@@ -221,36 +246,17 @@ export default function App() {
   return (
     <div style={{ backgroundColor: '#020d07', color: '#e2e8f0', minHeight: '100vh', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
       
-      {/* Top Navbar */}
-      <header style={{ borderBottom: '1px solid #0f3822', background: '#05180f', position: 'sticky', top: 0, zIndex: 40 }}>
-        <div style={{ maxWidth: '650px', margin: '0 auto', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <h1 style={{ fontSize: '18px', fontWeight: '900', color: '#22c55e', margin: 0 }}>
-              ⚡ TECH TV PREDICTOR <span style={{ fontSize: '10px', background: '#22c55e', color: '#020d07', padding: '1px 5px', borderRadius: '4px' }}>PRO</span>
-            </h1>
-            <div style={{ fontSize: '10px', color: '#86efac', opacity: 0.85 }}>Live Football Match Tracker & Odds Hub</div>
-          </div>
-          <div>
-            {currentUser ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                {isAdmin && <span style={{ fontSize: '10px', background: '#eab308', color: '#020d07', fontWeight: '900', padding: '2px 6px', borderRadius: '4px' }}>ADMIN</span>}
-                <button onClick={handleLogout} style={{ background: '#dc2626', color: '#fff', border: 'none', padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>
-                  Sign Out
-                </button>
-              </div>
-            ) : (
-              <button onClick={() => setShowAuthModal(true)} style={{ background: '#22c55e', color: '#020d07', border: 'none', padding: '6px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}>
-                Sign In
-              </button>
-            )}
-          </div>
-        </div>
-      </header>
+      {/* Dynamic Header */}
+      <Header
+        currentUser={currentUser}
+        isAdmin={isAdmin}
+        onLogout={handleLogout}
+        onOpenSignIn={() => setShowAuthModal(true)}
+      />
 
-      {/* Main Container: Public Sports Portal */}
       <main style={{ maxWidth: '650px', margin: '0 auto', padding: '14px 16px 80px' }}>
         
-        {/* Navigation Tabs */}
+        {/* Navigation Tabs (Admin tab appears dynamically when owner is logged in) */}
         <div style={{ display: 'flex', background: '#05180f', padding: '4px', borderRadius: '12px', margin: '8px 0 16px', border: '1px solid #14462e' }}>
           {['Live', 'Matches', 'VIP', ...(isAdmin ? ['Admin'] : [])].map(tab => (
             <button
@@ -265,10 +271,10 @@ export default function App() {
                 fontSize: '12px',
                 cursor: 'pointer',
                 background: currentTab === tab ? '#14462e' : 'transparent',
-                color: currentTab === tab ? (tab === 'VIP' ? '#facc15' : '#22c55e') : '#86efac'
+                color: currentTab === tab ? (tab === 'VIP' ? '#facc15' : tab === 'Admin' ? '#eab308' : '#22c55e') : '#86efac'
               }}
             >
-              {tab === 'Live' ? `🔴 Live (${liveMatches.length})` : tab === 'VIP' ? '👑 VIP' : tab}
+              {tab === 'Live' ? `🔴 Live (${liveMatches.length})` : tab === 'VIP' ? '👑 VIP' : tab === 'Admin' ? '⚙️ Admin' : tab}
             </button>
           ))}
         </div>
@@ -386,10 +392,12 @@ export default function App() {
           />
         )}
 
-        {/* TAB 4: ADMIN */}
+        {/* TAB 4: ADMIN PANEL (OWNER EXCLUSIVE) */}
         {currentTab === 'Admin' && isAdmin && (
           <div style={{ background: '#061d12', border: '2px solid #22c55e', borderRadius: '16px', padding: '18px' }}>
-            <h3 style={{ fontSize: '16px', fontWeight: '900', color: '#22c55e', marginBottom: '12px' }}>👑 Admin Airtime Approvals</h3>
+            <h3 style={{ fontSize: '16px', fontWeight: '900', color: '#22c55e', marginBottom: '4px' }}>👑 Admin & Airtime Approvals</h3>
+            <p style={{ fontSize: '11px', color: '#86efac', marginBottom: '14px' }}>Welcome Boss ({currentUser}). Ma requests e-Airtime anouya pano:</p>
+
             <div>
               {vipRequests.map(req => (
                 <div key={req.id} style={{ background: '#020d07', padding: '12px', borderRadius: '10px', border: '1px solid #14462e', marginBottom: '8px' }}>
@@ -415,7 +423,7 @@ export default function App() {
 
       </main>
 
-      {/* POPUP AUTH MODAL (Safe for Google Crawlers) */}
+      {/* POPUP AUTH MODAL */}
       {showAuthModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(5px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', zIndex: 100 }}>
           <div style={{ background: '#051b11', border: '1px solid #22c55e', borderRadius: '20px', width: '100%', maxWidth: '420px', padding: '22px' }}>
