@@ -121,7 +121,7 @@ export default function App() {
     try {
       await supabase.auth.signInWithOAuth({
         provider: 'google',
-        options: { redirectTo: window.location.origin }
+        options: { redirectTo: 'https://techtv-pro-odds.vercel.app' }
       });
     } catch (err) {
       setAuthMsg('Google sign in error.');
