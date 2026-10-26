@@ -5,7 +5,7 @@ import Header from './components/Header';
 import VipSection from './components/VipSection';
 import MatchModal from './components/MatchModal';
 
-// ADMIN EMAILS (Taisa zvese zvaungashandise kuti Admin iite active 100%)
+// ADMIN & OWNER EMAILS
 const ADMIN_EMAILS = [
   'publicaccount660@gmail.com',
   'publicacount660@gmail.com',
@@ -24,8 +24,42 @@ const LEAGUES = [
   { id: 'uefa.champions', name: 'UEFA Champions League' }
 ];
 
+// Helper to decode JWT Access Token directly from Google OAuth Hash
+function decodeJwt(token) {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    return JSON.parse(jsonPayload);
+  } catch (e) {
+    return null;
+  }
+}
+
 export default function App() {
-  const [currentUser, setCurrentUser] = useState(() => localStorage.getItem('tech_tv_user') || null);
+  // 1. Check LocalStorage or immediately parse Hash from Google redirect
+  const [currentUser, setCurrentUser] = useState(() => {
+    // Check if redirect contains access_token in Hash
+    if (typeof window !== 'undefined' && window.location.hash.includes('access_token')) {
+      const hashParams = new URLSearchParams(window.location.hash.substring(1));
+      const token = hashParams.get('access_token');
+      if (token) {
+        const payload = decodeJwt(token);
+        if (payload?.email) {
+          const userEmail = payload.email.toLowerCase();
+          localStorage.setItem('tech_tv_user', userEmail);
+          return userEmail;
+        }
+      }
+    }
+    return localStorage.getItem('tech_tv_user') || null;
+  });
+
   const [currentTab, setCurrentTab] = useState('Matches');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [matches, setMatches] = useState([]);
@@ -48,23 +82,57 @@ export default function App() {
   ]);
   const [paymentSentMsg, setPaymentSentMsg] = useState(false);
 
-  // REAL-TIME SUPABASE AUTH LISTENER (Catch Google Login instantly)
+  // Instant OAuth Hash & Session Listener
   useEffect(() => {
-    // 1. Initial check
+    // A. Parse OAuth Hash (#access_token=...) immediately upon landing from Google
+    if (window.location.hash && window.location.hash.includes('access_token')) {
+      const hashParams = new URLSearchParams(window.location.hash.substring(1));
+      const token = hashParams.get('access_token');
+      if (token) {
+        const payload = decodeJwt(token);
+        if (payload?.email) {
+          const u = payload.email.toLowerCase();
+          setCurrentUser(u);
+          localStorage.setItem('tech_tv_user', u);
+          setShowAuthModal(false);
+          // Clean the messy hash from the address bar
+          window.history.replaceState(null, '', window.location.pathname);
+        }
+      }
+    }
+
+    // B. Check for PKCE Code (?code=...)
+    if (window.location.search && window.location.search.includes('code=')) {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('code');
+      if (code) {
+        supabase.auth.exchangeCodeForSession(code).then(({ data }) => {
+          if (data?.session?.user?.email) {
+            const u = data.session.user.email.toLowerCase();
+            setCurrentUser(u);
+            localStorage.setItem('tech_tv_user', u);
+            setShowAuthModal(false);
+            window.history.replaceState(null, '', window.location.pathname);
+          }
+        }).catch(() => {});
+      }
+    }
+
+    // C. Supabase Session Check
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user?.email) {
-        const userEmail = session.user.email.toLowerCase();
-        setCurrentUser(userEmail);
-        localStorage.setItem('tech_tv_user', userEmail);
+        const u = session.user.email.toLowerCase();
+        setCurrentUser(u);
+        localStorage.setItem('tech_tv_user', u);
       }
     }).catch(() => {});
 
-    // 2. Real-time auth state change (Catches OAuth Redirects immediately)
+    // D. Real-time auth listener
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user?.email) {
-        const userEmail = session.user.email.toLowerCase();
-        setCurrentUser(userEmail);
-        localStorage.setItem('tech_tv_user', userEmail);
+        const u = session.user.email.toLowerCase();
+        setCurrentUser(u);
+        localStorage.setItem('tech_tv_user', u);
         setShowAuthModal(false);
       }
     });
@@ -246,7 +314,7 @@ export default function App() {
   return (
     <div style={{ backgroundColor: '#020d07', color: '#e2e8f0', minHeight: '100vh', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
       
-      {/* Dynamic Header */}
+      {/* Top Header */}
       <Header
         currentUser={currentUser}
         isAdmin={isAdmin}
@@ -256,7 +324,7 @@ export default function App() {
 
       <main style={{ maxWidth: '650px', margin: '0 auto', padding: '14px 16px 80px' }}>
         
-        {/* Navigation Tabs (Admin tab appears dynamically when owner is logged in) */}
+        {/* Navigation Tabs */}
         <div style={{ display: 'flex', background: '#05180f', padding: '4px', borderRadius: '12px', margin: '8px 0 16px', border: '1px solid #14462e' }}>
           {['Live', 'Matches', 'VIP', ...(isAdmin ? ['Admin'] : [])].map(tab => (
             <button
@@ -392,11 +460,11 @@ export default function App() {
           />
         )}
 
-        {/* TAB 4: ADMIN PANEL (OWNER EXCLUSIVE) */}
+        {/* TAB 4: ADMIN PANEL */}
         {currentTab === 'Admin' && isAdmin && (
           <div style={{ background: '#061d12', border: '2px solid #22c55e', borderRadius: '16px', padding: '18px' }}>
             <h3 style={{ fontSize: '16px', fontWeight: '900', color: '#22c55e', marginBottom: '4px' }}>👑 Admin & Airtime Approvals</h3>
-            <p style={{ fontSize: '11px', color: '#86efac', marginBottom: '14px' }}>Welcome Boss ({currentUser}). Ma requests e-Airtime anouya pano:</p>
+            <p style={{ fontSize: '11px', color: '#86efac', marginBottom: '14px' }}>Welcome Boss ({currentUser}). Ma requests e-Airtime:</p>
 
             <div>
               {vipRequests.map(req => (
